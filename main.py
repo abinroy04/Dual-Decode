@@ -1,0 +1,200 @@
+import os
+# Add these imports at the top to suppress TensorFlow messages
+import logging
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # 0=all, 1=no INFO, 2=no WARNING, 3=no ERROR
+import tensorflow as tf
+tf.get_logger().setLevel(logging.ERROR)
+
+from flask import Flask, request, render_template, jsonify, session
+from pydub import AudioSegment
+import soundfile as sf
+from processing import process_audio  # Import our processing function
+
+# Configure other logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+app = Flask(__name__)
+app.secret_key = 'dualdecode_secret_key'  # Secret key for sessions
+
+# Create upload folder relative to the script's location instead of working directory
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+UPLOAD_FOLDER = os.path.join(BASE_DIR, 'speechprocessing')
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+print(f"Upload folder created at: {UPLOAD_FOLDER}")
+
+# Allowed file extensions (ONLY WAV to avoid FFmpeg dependency)
+ALLOWED_EXTENSIONS = {'wav'}
+
+def allowed_file(filename):
+    """Check if the uploaded file has a valid WAV extension."""
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def split_audio(file_path, output_folder="speechprocessing"):
+    """Splits a WAV audio file into 50-second segments."""
+    try:
+        os.makedirs(output_folder, exist_ok=True)  # Ensure output folder exists
+
+        # Check if file exists
+        if not os.path.exists(file_path):
+            print(f"❌ Error: File {file_path} not found")
+            return False
+
+        # Print file info for debugging
+        print(f"Processing file: {file_path}")
+        print(f"File size: {os.path.getsize(file_path)} bytes")
+
+        try:
+            # Try to load the WAV file with more error handling
+            audio = AudioSegment.from_file(file_path, format="wav")
+            print(f"Successfully loaded audio: {len(audio)}ms duration, {audio.channels} channels, {audio.frame_rate}Hz")
+        except Exception as e:
+            print(f"❌ Error loading audio with pydub: {str(e)}")
+            # Try an alternative approach with soundfile
+            try:
+                import soundfile as sf
+                data, samplerate = sf.read(file_path)
+                from pydub.audio_segment import AudioSegment as PydubAudioSegment
+                audio = PydubAudioSegment(
+                    data.tobytes(),
+                    frame_rate=samplerate,
+                    sample_width=data.dtype.itemsize,
+                    channels=1 if len(data.shape) == 1 else data.shape[1]
+                )
+                print(f"Loaded with soundfile backup method: {len(audio)}ms")
+            except Exception as backup_error:
+                print(f"❌ Both loading methods failed. Backup error: {str(backup_error)}")
+                return False
+
+        duration = len(audio)  # Duration in milliseconds
+        segment_length = 50 * 1000  # 50 seconds in milliseconds
+        count = 1
+        segment_paths = []
+
+        for start in range(0, duration, segment_length):
+            end = min(start + segment_length, duration)
+            segment = audio[start:end]
+
+            segment_filename = f"unprocessedsplitaudio{count}.wav"
+            segment_path = os.path.join(output_folder, segment_filename)
+            
+            # Add more error handling during export
+            try:
+                segment.export(segment_path, format="wav")
+                print(f"✅ Saved: {segment_path}")  # Debugging output
+                segment_paths.append(segment_path)
+            except Exception as export_error:
+                print(f"❌ Error exporting segment {count}: {str(export_error)}")
+            
+            count += 1
+
+        return segment_paths if segment_paths else False  # Return list of paths or False if none were created
+
+    except Exception as e:
+        print(f"❌ Error processing audio: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False  # Failure
+
+@app.route('/')
+def index():
+    """Render the landing page."""
+    return render_template('landing.html')
+
+@app.route('/upload')
+def upload_page():
+    """Render the upload page."""
+    return render_template('index.html')
+
+@app.route('/upload', methods=['POST'])
+def upload_audio():
+    """Handle audio file uploads, split the audio, and process it for transcription."""
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file part'}), 400
+
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'No selected file'}), 400
+
+    if file and allowed_file(file.filename):
+        file_path = os.path.join(UPLOAD_FOLDER, file.filename)
+        file.save(file_path)
+        
+        print(f"File saved at: {file_path}")
+        
+        # Verify file was saved correctly
+        if not os.path.exists(file_path):
+            return jsonify({'error': '❌ File was not saved correctly'}), 500
+            
+        if os.path.getsize(file_path) == 0:
+            return jsonify({'error': '❌ Uploaded file is empty'}), 400
+
+        # Process the audio file for transcription
+        processing_result = process_audio(file_path, UPLOAD_FOLDER)
+        
+        if 'success' in processing_result and processing_result['success']:
+            # Store results in session to display on the results page
+            session['message'] = '✅ File uploaded and processed successfully'
+            session['transcription'] = processing_result['transcription']
+            session['output_file'] = processing_result['output_file']
+            
+            # Return a JSON response that will redirect to the results page
+            return jsonify({
+                'success': True,
+                'redirect': '/results'
+            }), 200
+        else:
+            error_message = processing_result.get('error', 'Unknown error')
+            session['message'] = f"❌ File processing failed: {error_message}"
+            session['transcription'] = None
+            session['output_file'] = None
+            
+            return jsonify({
+                'success': False,
+                'redirect': '/results',
+                'error': error_message
+            }), 200
+
+    session['message'] = '❌ Invalid file format. Only WAV is supported.'
+    return jsonify({
+        'success': False,
+        'redirect': '/results'
+    }), 200
+
+@app.route('/results')
+def results_page():
+    """Display the results of audio processing."""
+    message = session.get('message', 'No processing information available')
+    transcription = session.get('transcription', None)
+    output_file = session.get('output_file', None)
+    
+    return render_template('results.html', 
+                          message=message, 
+                          transcription=transcription, 
+                          output_file=output_file)
+
+@app.route('/segments', methods=['GET'])
+def list_segments():
+    """List all available audio segments."""
+    try:
+        audio_files = [f for f in os.listdir(UPLOAD_FOLDER) 
+                      if f.startswith('unprocessedsplitaudio') and f.endswith('.wav')]
+        
+        # Sort files numerically
+        audio_files.sort(key=lambda x: int(os.path.basename(x).replace('unprocessedsplitaudio', '').replace('.wav', '')))
+        
+        if not audio_files:
+            return jsonify({'message': 'No audio segments found'}), 404
+            
+        return jsonify({
+            'message': f'Found {len(audio_files)} audio segments',
+            'segments': audio_files
+        }), 200
+            
+    except Exception as e:
+        print(f"❌ Error listing segments: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'❌ Error listing segments: {str(e)}'}), 500
+
+if __name__ == '__main__':
+    app.run(debug=False)
