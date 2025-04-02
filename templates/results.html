@@ -8,6 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
     <style>
         html, body {
             height: 100%;
@@ -105,60 +106,6 @@
             background: linear-gradient(transparent, rgba(0, 0, 0, 0.8));
         }
 
-        .actions {
-            display: flex;
-            justify-content: space-between;
-            margin-top: 20px;
-            gap: 10px; /* Add consistent spacing between buttons */
-        }
-
-        .action-button {
-            padding: 10px 20px;
-            background-color: #4a90e2;
-            color: white;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-            font-family: 'Poppins', sans-serif;
-            transition: background-color 0.3s;
-            text-decoration: none;
-            display: inline-block;
-            text-align: center;
-            min-width: 120px; /* Set minimum width for all buttons */
-            font-size: 14px; /* Consistent font size */
-            line-height: 1.5; /* Consistent line height */
-            height: 40px; /* Consistent height */
-            box-sizing: border-box; /* Include padding in height calculation */
-        }
-
-        .action-button:hover {
-            background-color: #3a7bc8;
-            text-decoration: none;
-        }
-
-        .home-button {
-            background-color: #4a90e2;
-        }
-
-        .home-button:hover {
-            background-color: #3a7bc8;
-        }
-
-        .action-button.create-notes {
-            background-color: #099427;
-        }
-        
-        .action-button.create-notes:hover {
-            background-color: #04791d;
-        }
-        
-        /* Properly style disabled button */
-        .action-button:disabled {
-            background-color: #888888;
-            cursor: not-allowed;
-            opacity: 0.7;
-        }
-
         .notes-loading {
             display: none;
             margin-top: 15px;
@@ -177,72 +124,149 @@
             vertical-align: middle;
         }
         
+        .create-notes-btn {
+            background-color: #4a90e2;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            padding: 10px 20px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        
         @keyframes spin {
             to { transform: rotate(360deg); }
+        }
+
+        /* Hamburger menu styles */
+        .menu-toggle {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            z-index: 1000;
+            font-size: 24px;
+            background: #4a90e2;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 8px 12px;
+            cursor: pointer;
+        }
+        
+        .sidenav {
+            height: 100%;
+            width: 0;
+            position: fixed;
+            z-index: 999;
+            top: 0;
+            left: 0;
+            background-color: #111;
+            overflow-x: hidden;
+            transition: 0.5s;
+            padding-top: 60px;
+        }
+        
+        .sidenav a {
+            padding: 15px 8px 15px 32px;
+            text-decoration: none;
+            font-size: 18px;
+            color: #818181;
+            display: block;
+            transition: 0.3s;
+        }
+        
+        .sidenav a:hover {
+            color: #f1f1f1;
+        }
+        
+        .sidenav .closebtn {
+            position: absolute;
+            top: 0;
+            right: 25px;
+            font-size: 36px;
+            margin-left: 50px;
+        }
+        
+        #main {
+            transition: margin-left .5s;
         }
     </style>
 </head>
 <body>
     <canvas id="background-animation"></canvas>
-    <header>
-        <div class="brand">
-            <h1>DUAL DECODE</h1>
-        </div>
-        <p class="tagline">Your solution for audio conversion and code switching</p>
-    </header>
-    <main>
-        <div class="results-container">
-            <h2>Processing Results</h2>
-            <div class="status-message">
-                <p>{{ message }}</p>
+    <!-- Hamburger Menu Button -->
+    <button class="menu-toggle" onclick="openNav()">
+        <i class="fas fa-bars"></i>
+    </button>
+    
+    <!-- Side Navigation Menu -->
+    <div id="mySidenav" class="sidenav">
+        <a href="javascript:void(0)" class="closebtn" onclick="closeNav()">&times;</a>
+        <a href="/"><i class="fas fa-home"></i> Home</a>
+        <a href="/upload"><i class="fas fa-upload"></i> Upload Another File</a>
+    </div>
+    
+    <!-- Main Content -->
+    <div id="main">
+        <header>
+            <div class="brand">
+                <h1>DUAL DECODE</h1>
             </div>
-
-            {% if transcription %}
-            <div class="section-header">
-                <h3>Transcription:</h3>
-                <button class="toggle-btn" id="toggle-transcription">Expand/Collapse</button>
-            </div>
-            <div class="transcription collapsed" id="transcription-container">
-                {{ transcription }}
-            </div>
-            {% endif %}
-
-            <!-- Notes section - initially hidden -->
-            <div id="notes-section" {% if not summary %}style="display: none;"{% endif %}>
-                <div class="section-header">
-                    <h3>Summary & Study Notes:</h3>
-                    <button class="toggle-btn" id="toggle-summary">Expand/Collapse</button>
+            <p class="tagline">Your solution for audio conversion and code switching</p>
+        </header>
+        <main>
+            <div class="results-container">
+                <h2>Processing Results</h2>
+                <div class="status-message">
+                    <p>{{ message }}</p>
                 </div>
-                <div class="summary" id="summary-container">
-                    {% if summary %}
-                        {{ summary | safe }}
-                    {% endif %}
-                </div>
-            </div>
-            
-            <!-- Notes loading indicator -->
-            <div class="notes-loading" id="notes-loading">
-                <div class="notes-spinner"></div>
-                <span>Generating notes with Gemini AI...</span>
-            </div>
-            
-            <!-- Error message -->
-            {% if summary_error %}
-            <div class="summary">
-                <p>Unable to generate summary: {{ summary_error }}</p>
-                <p>Please ensure the Gemini API key is properly configured.</p>
-            </div>
-            {% endif %}
 
-            <div class="actions">
-                <a href="/" class="action-button home-button">Back to Home</a>
-                <a href="/upload" class="action-button">Process Another File</a>
                 {% if transcription %}
-                <button id="create-notes-btn" class="action-button create-notes">Create Notes</button>
+                <div class="section-header">
+                    <h3>Transcription:</h3>
+                    <button class="toggle-btn" id="toggle-transcription">Expand/Collapse</button>
+                </div>
+                <div class="transcription collapsed" id="transcription-container">
+                    {{ transcription }}
+                </div>
+                
+                <!-- Add the Create Notes button at the bottom of transcription section -->
+                {% if transcription and not summary %}
+                <div style="text-align: center; margin-top: 15px; margin-bottom: 20px;">
+                    <button id="create-notes-btn" class="create-notes-btn">Create Notes</button>
+                </div>
+                {% endif %}
+                {% endif %}
+
+                <!-- Notes section - initially hidden -->
+                <div id="notes-section" {% if not summary %}style="display: none;"{% endif %}>
+                    <div class="section-header">
+                        <h3>Summary & Study Notes:</h3>
+                        <button class="toggle-btn" id="toggle-summary">Expand/Collapse</button>
+                    </div>
+                    <div class="summary" id="summary-container">
+                        {% if summary %}
+                            {{ summary | safe }}
+                        {% endif %}
+                    </div>
+                </div>
+                
+                <!-- Notes loading indicator -->
+                <div class="notes-loading" id="notes-loading">
+                    <div class="notes-spinner"></div>
+                    <span>Generating notes with Gemini AI...</span>
+                </div>
+                
+                <!-- Error message -->
+                {% if summary_error %}
+                <div class="summary">
+                    <p>Unable to generate summary: {{ summary_error }}</p>
+                    <p>Please ensure the Gemini API key is properly configured.</p>
+                </div>
                 {% endif %}
             </div>
-        </div>
-    </main>
+        </main>
+    </div>
     <script>
         const canvas = document.getElementById('background-animation');
         const ctx = canvas.getContext('2d');
@@ -387,6 +411,17 @@
                 });
             }
         });
+
+        // Hamburger menu functions
+        function openNav() {
+            document.getElementById("mySidenav").style.width = "250px";
+            document.getElementById("main").style.marginLeft = "250px";
+        }
+        
+        function closeNav() {
+            document.getElementById("mySidenav").style.width = "0";
+            document.getElementById("main").style.marginLeft = "0";
+        }
     </script>
 </body>
 </html>
