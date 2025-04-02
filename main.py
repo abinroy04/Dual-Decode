@@ -1,19 +1,17 @@
 import os
-# Add these imports at the top to suppress TensorFlow messages
 import logging
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # 0=all, 1=no INFO, 2=no WARNING, 3=no ERROR
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2' 
 import tensorflow as tf
 tf.get_logger().setLevel(logging.ERROR)
 
 from flask import Flask, request, render_template, jsonify, session
 from pydub import AudioSegment
 import soundfile as sf
-from processing import process_audio  # Import our processing function
+from processing import process_audio
 import requests
 import json
-from dotenv import load_dotenv  # Add this import
+from dotenv import load_dotenv  
 
-# Load environment variables from .env file
 load_dotenv()
 
 # Configure other logging
@@ -22,13 +20,11 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 app = Flask(__name__)
 app.secret_key = 'dualdecode_secret_key'  # Secret key for sessions
 
-# Create upload folder relative to the script's location instead of working directory
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_FOLDER = os.path.join(BASE_DIR, 'speechprocessing')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 print(f"Upload folder created at: {UPLOAD_FOLDER}")
 
-# Allowed file extensions (ONLY WAV to avoid FFmpeg dependency)
 ALLOWED_EXTENSIONS = {'wav'}
 
 def allowed_file(filename):
@@ -38,7 +34,7 @@ def allowed_file(filename):
 def split_audio(file_path, output_folder="speechprocessing"):
     """Splits a WAV audio file into 50-second segments."""
     try:
-        os.makedirs(output_folder, exist_ok=True)  # Ensure output folder exists
+        os.makedirs(output_folder, exist_ok=True)  
 
         # Check if file exists
         if not os.path.exists(file_path):
@@ -50,12 +46,11 @@ def split_audio(file_path, output_folder="speechprocessing"):
         print(f"File size: {os.path.getsize(file_path)} bytes")
 
         try:
-            # Try to load the WAV file with more error handling
             audio = AudioSegment.from_file(file_path, format="wav")
             print(f"Successfully loaded audio: {len(audio)}ms duration, {audio.channels} channels, {audio.frame_rate}Hz")
         except Exception as e:
             print(f"❌ Error loading audio with pydub: {str(e)}")
-            # Try an alternative approach with soundfile
+
             try:
                 import soundfile as sf
                 data, samplerate = sf.read(file_path)
@@ -83,17 +78,16 @@ def split_audio(file_path, output_folder="speechprocessing"):
             segment_filename = f"unprocessedsplitaudio{count}.wav"
             segment_path = os.path.join(output_folder, segment_filename)
             
-            # Add more error handling during export
             try:
                 segment.export(segment_path, format="wav")
-                print(f"✅ Saved: {segment_path}")  # Debugging output
+                print(f"✅ Saved: {segment_path}")
                 segment_paths.append(segment_path)
             except Exception as export_error:
                 print(f"❌ Error exporting segment {count}: {str(export_error)}")
             
             count += 1
 
-        return segment_paths if segment_paths else False  # Return list of paths or False if none were created
+        return segment_paths if segment_paths else False
 
     except Exception as e:
         print(f"❌ Error processing audio: {str(e)}")
@@ -112,7 +106,6 @@ def generate_summary_with_gemini(transcription):
         dict: Contains success status and either summary or error message
     """
     try:
-        # Get API key from environment variables
         api_key = os.environ.get('GEMINI_API_KEY')
         
         if not api_key:
@@ -121,11 +114,9 @@ def generate_summary_with_gemini(transcription):
                 'success': False,
                 'error': 'Gemini API key not configured'
             }
-            
-        # Updated Gemini API endpoint based on curl example
+        
         url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
         
-        # Prepare the custom prompt with the transcription
         prompt = (
             "Summarize the following transcribed and translated lecture recordings from a "
             "Computer Science Engineering classroom following the KTU syllabus. The lectures "
@@ -138,7 +129,6 @@ def generate_summary_with_gemini(transcription):
             f"Transcribed text:\n{transcription}"
         )
         
-        # Prepare request payload
         payload = {
             "contents": [
                 {
@@ -151,18 +141,15 @@ def generate_summary_with_gemini(transcription):
             ]
         }
         
-        # Make API request
         response = requests.post(
             f"{url}?key={api_key}",
             headers={"Content-Type": "application/json"},
             data=json.dumps(payload)
         )
         
-        # Check response
         if response.status_code == 200:
             response_data = response.json()
             
-            # Extract the summary text from the response
             if 'candidates' in response_data and len(response_data['candidates']) > 0:
                 if 'content' in response_data['candidates'][0]:
                     content = response_data['candidates'][0]['content']
@@ -218,30 +205,24 @@ def upload_audio():
         
         print(f"File saved at: {file_path}")
         
-        # Verify file was saved correctly
         if not os.path.exists(file_path):
             return jsonify({'error': '❌ File was not saved correctly'}), 500
             
         if os.path.getsize(file_path) == 0:
             return jsonify({'error': '❌ Uploaded file is empty'}), 400
 
-        # Process the audio file for transcription
         processing_result = process_audio(file_path, UPLOAD_FOLDER)
         
         if 'success' in processing_result and processing_result['success']:
             # Store transcription results
             transcription = processing_result['transcription']
-            
-            # Store results in session to display on the results page
             session['message'] = '✅ File uploaded and processed successfully'
             session['transcription'] = transcription
             session['output_file'] = processing_result['output_file']
             
-            # Don't generate summary yet - we'll do it on demand
             session['summary'] = None
             session['summary_error'] = None
             
-            # Return a JSON response that will redirect to the results page
             return jsonify({
                 'success': True,
                 'redirect': '/results'
@@ -267,7 +248,7 @@ def upload_audio():
 @app.route('/generate-notes', methods=['POST'])
 def generate_notes():
     """Generate notes from the transcription using Gemini API."""
-    # Get transcription from session
+
     transcription = session.get('transcription', None)
     
     if not transcription:
@@ -276,10 +257,8 @@ def generate_notes():
             'error': 'No transcription available. Please process an audio file first.'
         }), 400
     
-    # Generate summary using Gemini API
     summary_result = generate_summary_with_gemini(transcription)
     
-    # Update session with the results
     if summary_result['success']:
         session['summary'] = summary_result['summary']
         session['summary_error'] = None
