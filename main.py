@@ -9,6 +9,12 @@ from flask import Flask, request, render_template, jsonify, session
 from pydub import AudioSegment
 import soundfile as sf
 from processing import process_audio  # Import our processing function
+import requests
+import json
+from dotenv import load_dotenv  # Add this import
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configure other logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -95,6 +101,97 @@ def split_audio(file_path, output_folder="speechprocessing"):
         traceback.print_exc()
         return False  # Failure
 
+def generate_summary_with_gemini(transcription):
+    """
+    Generate a summary of the transcribed text using Gemini API.
+    
+    Args:
+        transcription (str): The transcribed text to summarize
+        
+    Returns:
+        dict: Contains success status and either summary or error message
+    """
+    try:
+        # Get API key from environment variables
+        api_key = os.environ.get('GEMINI_API_KEY')
+        
+        if not api_key:
+            print("❌ Warning: GEMINI_API_KEY not found in environment variables.")
+            return {
+                'success': False,
+                'error': 'Gemini API key not configured'
+            }
+            
+        # Updated Gemini API endpoint based on curl example
+        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+        
+        # Prepare the custom prompt with the transcription
+        prompt = (
+            "Summarize the following transcribed and translated lecture recordings from a "
+            "Computer Science Engineering classroom following the KTU syllabus. The lectures "
+            "contain both English and Malayalam, but the provided text is already translated "
+            "into English. Focus on key concepts, important explanations, and any technical terms "
+            "covered. Ensure the summary is concise but retains the essential details of the topics "
+            "discussed. Using these transcribed text, generate a detailed note for students to refer "
+            "during learning sessions, these notes can also include information not mentioned during "
+            "the class, include sample questions where possible. Do not use bold text or italics in your response\n\n"
+            f"Transcribed text:\n{transcription}"
+        )
+        
+        # Prepare request payload
+        payload = {
+            "contents": [
+                {
+                    "parts": [
+                        {
+                            "text": prompt
+                        }
+                    ]
+                }
+            ]
+        }
+        
+        # Make API request
+        response = requests.post(
+            f"{url}?key={api_key}",
+            headers={"Content-Type": "application/json"},
+            data=json.dumps(payload)
+        )
+        
+        # Check response
+        if response.status_code == 200:
+            response_data = response.json()
+            
+            # Extract the summary text from the response
+            if 'candidates' in response_data and len(response_data['candidates']) > 0:
+                if 'content' in response_data['candidates'][0]:
+                    content = response_data['candidates'][0]['content']
+                    if 'parts' in content and len(content['parts']) > 0:
+                        summary = content['parts'][0]['text']
+                        return {
+                            'success': True,
+                            'summary': summary
+                        }
+            
+            return {
+                'success': False,
+                'error': 'Unable to extract summary from API response'
+            }
+        
+        else:
+            print(f"❌ Gemini API error (status code {response.status_code}): {response.text}")
+            return {
+                'success': False,
+                'error': f"API request failed with status code {response.status_code}"
+            }
+            
+    except Exception as e:
+        print(f"❌ Error calling Gemini API: {str(e)}")
+        return {
+            'success': False,
+            'error': f"Error generating summary: {str(e)}"
+        }
+
 @app.route('/')
 def index():
     """Render the landing page."""
@@ -132,10 +229,17 @@ def upload_audio():
         processing_result = process_audio(file_path, UPLOAD_FOLDER)
         
         if 'success' in processing_result and processing_result['success']:
+            # Store transcription results
+            transcription = processing_result['transcription']
+            
             # Store results in session to display on the results page
             session['message'] = '✅ File uploaded and processed successfully'
-            session['transcription'] = processing_result['transcription']
+            session['transcription'] = transcription
             session['output_file'] = processing_result['output_file']
+            
+            # Don't generate summary yet - we'll do it on demand
+            session['summary'] = None
+            session['summary_error'] = None
             
             # Return a JSON response that will redirect to the results page
             return jsonify({
@@ -160,17 +264,54 @@ def upload_audio():
         'redirect': '/results'
     }), 200
 
+@app.route('/generate-notes', methods=['POST'])
+def generate_notes():
+    """Generate notes from the transcription using Gemini API."""
+    # Get transcription from session
+    transcription = session.get('transcription', None)
+    
+    if not transcription:
+        return jsonify({
+            'success': False,
+            'error': 'No transcription available. Please process an audio file first.'
+        }), 400
+    
+    # Generate summary using Gemini API
+    summary_result = generate_summary_with_gemini(transcription)
+    
+    # Update session with the results
+    if summary_result['success']:
+        session['summary'] = summary_result['summary']
+        session['summary_error'] = None
+        
+        return jsonify({
+            'success': True,
+            'summary': summary_result['summary']
+        }), 200
+    else:
+        session['summary'] = None
+        session['summary_error'] = summary_result['error']
+        
+        return jsonify({
+            'success': False,
+            'error': summary_result['error']
+        }), 500
+
 @app.route('/results')
 def results_page():
     """Display the results of audio processing."""
     message = session.get('message', 'No processing information available')
     transcription = session.get('transcription', None)
     output_file = session.get('output_file', None)
+    summary = session.get('summary', None)
+    summary_error = session.get('summary_error', None)
     
     return render_template('results.html', 
                           message=message, 
                           transcription=transcription, 
-                          output_file=output_file)
+                          output_file=output_file,
+                          summary=summary,
+                          summary_error=summary_error)
 
 @app.route('/segments', methods=['GET'])
 def list_segments():
