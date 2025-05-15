@@ -15,8 +15,19 @@ def process_audio(audio_file_path, output_dir=None):
     Returns:
         dict: Contains transcription text and path to saved file
     """
-    # Check if CUDA is available and use it for acceleration
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    # Configure CUDA for PyTorch
+    if torch.cuda.is_available():
+        device = "cuda"
+        # Print detailed GPU information
+        gpu_name = torch.cuda.get_device_name(0)
+        gpu_mem = torch.cuda.get_device_properties(0).total_memory / (1024**3)  # Convert to GB
+        print(f"✅ GPU enabled: {gpu_name} with {gpu_mem:.2f}GB memory")
+        # Set CUDA device to avoid OOM errors
+        torch.cuda.set_device(0)
+    else:
+        device = "cpu"
+        print("⚠️ CUDA not available - using CPU instead")
+    
     print(f"Using device: {device}")
 
     # Set default output directory if none provided
@@ -64,7 +75,17 @@ def process_audio(audio_file_path, output_dir=None):
         # Load the Whisper Large v3 model and processor
         model_name = "openai/whisper-large-v3"
         processor = WhisperProcessor.from_pretrained(model_name)
-        model = pipeline("automatic-speech-recognition", model=model_name, device=0 if torch.cuda.is_available() else -1)
+        
+        # Explicitly set device mapping and configure pipeline with appropriate device
+        if torch.cuda.is_available():
+            model = pipeline(
+                "automatic-speech-recognition", 
+                model=model_name, 
+                device=0,  # Use first CUDA device
+                torch_dtype=torch.float16  # Use fp16 for efficiency on GPU
+            )
+        else:
+            model = pipeline("automatic-speech-recognition", model=model_name, device=-1)
 
         # Translate each chunk into English using Whisper
         translated_texts = []
